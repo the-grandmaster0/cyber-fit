@@ -1,0 +1,194 @@
+
+@import "tailwindcss";
+
+/* Tailwind CSS v4 - @theme is valid for Tailwind v4! */
+@theme {
+  --color-cyber-black: #050505;
+  --color-cyber-dark: #0a0a0f;
+  --color-cyber-darker: #080810;
+  
+  --color-cyber-purple-50: #f3e8ff;
+  --color-cyber-purple-100: #e9d5ff;
+  --color-cyber-purple-200: #d8b4fe;
+  --color-cyber-purple-300: #c084fc;
+  --color-cyber-purple-400: #a855f7;
+  --color-cyber-purple-500: #9333ea;
+  --color-cyber-purple-600: #7e22ce;
+  --color-cyber-purple-700: #6b21a8;
+  --color-cyber-purple-800: #581c87;
+  --color-cyber-purple-900: #4c1d95;
+  
+  --color-cyber-cyan-50: #ecfeff;
+  --color-cyber-cyan-100: #cffafe;
+  --color-cyber-cyan-200: #a5f3fc;
+  --color-cyber-cyan-300: #67e8f9;
+  --color-cyber-cyan-400: #22d3ee;
+  --color-cyber-cyan-500: #06b6d4;
+  --color-cyber-cyan-600: #0891b2;
+  --color-cyber-cyan-700: #0e7490;
+  --color-cyber-cyan-800: #155e75;
+  --color-cyber-cyan-900: #164e63;
+  
+  --color-cyber-green-400: #4ade80;
+  --color-cyber-green-500: #22c55e;
+  --color-cyber-green-600: #16a34a;
+  
+  --color-cyber-red-400: #f87171;
+  --color-cyber-red-500: #ef4444;
+  --color-cyber-red-600: #dc2626;
+  
+  --font-sans: "Orbitron", "Rajdhani", system-ui, sans-serif;
+  --font-mono: "Share Tech Mono", "Roboto Mono", monospace;
+  
+  --animate-grid-move: gridMove 20s linear infinite;
+  --animate-scanline: scanline 6s linear infinite;
+  --animate-glitch: glitch 2s infinite;
+  
+  --shadow-cyan-glow: 0 0 10px rgba(6, 182, 212, 0.5), 0 0 20px rgba(6, 182, 212, 0.3);
+  --shadow-purple-glow: 0 0 10px rgba(147, 51, 234, 0.5), 0 0 20px rgba(147, 51, 234, 0.3);
+  --shadow-green-glow: 0 0 10px rgba(34, 197, 94, 0.5), 0 0 20px rgba(34, 197, 94, 0.3);
+  --shadow-red-glow: 0 0 10px rgba(239, 68, 68, 0.5), 0 0 20px rgba(239, 68, 68, 0.3);
+}
+
+@keyframes gridMove {
+  0% { background-position: 0 0; }
+  100% { background-position: 50px 50px; }
+}
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+@keyframes glitch {
+  0%, 100% { transform: translate(0); }
+  20% { transform: translate(-2px, 2px); }
+  40% { transform: translate(-2px, -2px); }
+  60% { transform: translate(2px, 2px); }
+  80% { transform: translate(2px, -2px); }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-cyber-black);
+  color: var(--color-cyber-cyan-100);
+  font-family: var(--font-sans);
+  /* Prevent iOS font size inflation */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Smooth momentum scrolling on iOS */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Safe area padding for notched phones (iPhone X+) */
+.safe-top    { padding-top:    env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+
+/* Enforce minimum touch targets on interactive elements — 
+   use sparingly; override per-component where needed */
+button, a, [role="button"] {
+  min-height: unset;
+  min-width: unset;
+}
+
+/* Prevent table overflow breaking layout */
+table {
+  border-collapse: collapse;
+}
+
+/* Smooth scrolling globally */
+html {
+  scroll-behavior: smooth;
+}
+
+.cyber-grid {
+  background-image: 
+    linear-gradient(rgba(34, 211, 238, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
+
+.cyber-button {
+  position: relative;
+  overflow: hidden;
+  border: 2px solid #06b6d4;
+  clip-path: polygon(
+    0 10px,
+    10px 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% calc(100% - 10px),
+    calc(100% - 10px) 100%,
+    10px 100%,
+    0 calc(100% - 10px)
+  );
+}
+
+.cyber-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.3), transparent);
+  transition: left 0.5s;
+}
+
+.cyber-button:hover::before {
+  left: 100%;
+}
+
+.cyber-card {
+  border: 2px solid #7e22ce;
+  position: relative;
+  clip-path: polygon(
+    0 15px,
+    15px 0,
+    calc(100% - 15px) 0,
+    100% 15px,
+    100% calc(100% - 15px),
+    calc(100% - 15px) 100%,
+    15px 100%,
+    0 calc(100% - 15px)
+  );
+}
+
+.cyber-card::before,
+.cyber-card::after {
+  content: '';
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border: 2px solid #06b6d4;
+}
+
+.cyber-card::before {
+  top: -2px;
+  left: -2px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.cyber-card::after {
+  bottom: -2px;
+  right: -2px;
+  border-left: none;
+  border-top: none;
+}
+
+.scanline {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: rgba(34, 211, 238, 0.15);
+  pointer-events: none;
+  z-index: 9999;
+}

@@ -157,237 +157,164 @@ The key is read exclusively by `server/services/genai.js`. All Gemini API reques
 
 ---
 
-## 4. AWS EC2 — Backend Deployment
+## 4. AWS Elastic Beanstalk — Backend Deployment
 
-### 4.1 Launch an Instance
+Elastic Beanstalk manages the EC2 instance, load balancer, auto-scaling, and Nginx reverse proxy for you. You deploy a ZIP of the `server/` folder and EB handles the rest.
 
-1. AWS Console → EC2 → **Launch Instance**.
-2. Name: `cyber-fit-backend`.
-3. AMI: **Ubuntu Server 24.04 LTS (64-bit x86)**.
-4. Instance type: **t3.small** (minimum; t3.medium recommended for multi-week plan generation).
-5. Key pair: create or select an existing `.pem` key pair. Download and store it securely.
-6. Network settings:
-   - Allow **SSH (port 22)** from your IP.
-   - Allow **HTTP (port 80)** from anywhere (Nginx → Node.js proxy).
-   - Allow **HTTPS (port 443)** from anywhere.
-   - **Do NOT expose port 3001** to the internet — keep it private behind Nginx.
-7. Storage: 20 GB gp3 is sufficient.
-8. Launch the instance.
+### 4.1 Prerequisites
 
-### 4.2 Security Group Summary
+- AWS account with appropriate IAM permissions
+- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html) installed and configured (`aws configure`)
+- [EB CLI](https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/eb-cli3-install.html) installed:
+  ```bash
+  pip install awsebcli
+  ```
 
-| Port | Protocol | Source | Purpose |
-|---|---|---|---|
-| 22 | TCP | Your IP | SSH access |
-| 80 | TCP | 0.0.0.0/0 | HTTP (redirects to HTTPS) |
-| 443 | TCP | 0.0.0.0/0 | HTTPS (Nginx → Node.js) |
-| 3001 | TCP | 127.0.0.1 | Node.js (local only, not public) |
+### 4.2 Prepare the Deployment Package
 
-### 4.3 SSH into the Instance
+EB deploys the contents of the `server/` directory. It will run `npm install` then `npm start` (or read the `Procfile`).
+
+**What EB needs in the ZIP:**
+```
+server/
+├── .ebextensions/
+│   └── nginx-sse.config     ← disables nginx buffering for SSE
+├── config/
+├── middleware/
+├── routes/
+├── services/
+├── app.js
+├── server.js
+├── package.json
+├── Procfile
+└── (no node_modules — EB installs them)
+└── (no .env — use EB Environment Properties instead)
+```
+
+> **Never include `.env` or `node_modules/` in the ZIP.** Secrets go in EB Environment Properties.
+
+Create the ZIP from inside the `server/` directory:
 
 ```bash
-chmod 400 your-key.pem
-ssh -i your-key.pem ubuntu@<EC2_PUBLIC_IP>
+cd server
+
+# Windows (PowerShell)
+Compress-Archive -Path * -DestinationPath ../cyber-fit-backend.zip -Force
+
+# macOS / Linux
+zip -r ../cyber-fit-backend.zip . --exclude "node_modules/*" --exclude ".env"
 ```
 
-### 4.4 Install Git
+### 4.3 Create the Elastic Beanstalk Application
+
+**Option A — AWS Console (recommended for first deployment)**
+
+1. Go to [Elastic Beanstalk Console](https://console.aws.amazon.com/elasticbeanstalk).
+2. Click **Create application**.
+3. **Application name**: `cyber-fit-api`
+4. Click **Create**.
+5. Click **Create environment**.
+6. **Environment tier**: Web server environment.
+7. **Platform**: Node.js — select **Node.js 20** (Amazon Linux 2023).
+8. **Application code**: Upload your code → choose the ZIP file created above.
+9. **Preset**: Single instance (free tier eligible) or High availability (load balanced).
+10. Click **Next**.
+
+**Option B — EB CLI**
 
 ```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y git
+cd server
+eb init cyber-fit-api --platform "Node.js 20 running on 64bit Amazon Linux 2023" --region us-east-1
+eb create cyber-fit-prod --single
 ```
 
-### 4.5 Install Node.js 20
+### 4.4 Set Environment Properties (Secrets)
+
+**This replaces the `.env` file on EB.** In the EB Console:
+
+1. Your environment → **Configuration** → **Updates, monitoring, and logging**.
+2. Scroll to **Environment properties** → **Edit**.
+3. Add each variable:
+
+| Key | Value |
+|---|---|
+| `NODE_ENV` | `production` |
+| `CLIENT_ORIGIN` | `https://your-app.vercel.app` |
+| `SUPABASE_URL` | `https://xxxx.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | `eyJ...` |
+| `GEMINI_API_KEY` | `AIza...` |
+| `GEMINI_MODEL` | `gemini-2.0-flash` |
+| `GOOGLE_CLIENT_ID` | `xxxx.apps.googleusercontent.com` |
+| `GOOGLE_CLIENT_SECRET` | `GOCSPX-...` |
+
+> EB automatically injects `PORT=8080` — your server already reads `process.env.PORT` so no change is needed.
+
+4. Click **Apply**. EB will restart the environment with the new variables.
+
+**Via EB CLI:**
+```bash
+eb setenv NODE_ENV=production \
+  CLIENT_ORIGIN=https://your-app.vercel.app \
+  SUPABASE_URL=https://xxxx.supabase.co \
+  SUPABASE_SERVICE_ROLE_KEY=eyJ... \
+  GEMINI_API_KEY=AIza... \
+  GEMINI_MODEL=gemini-2.0-flash \
+  GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com \
+  GOOGLE_CLIENT_SECRET=GOCSPX-...
+```
+
+### 4.5 Security Group Configuration
+
+EB creates a security group automatically. Verify it only exposes:
+
+| Port | Source | Purpose |
+|---|---|---|
+| 80 | 0.0.0.0/0 | HTTP (EB redirects to HTTPS) |
+| 443 | 0.0.0.0/0 | HTTPS |
+| 8080 | EB security group only | Node.js (internal, not public) |
+
+To add HTTPS:
+
+1. EB Console → your environment → **Configuration** → **Load balancer** → **Edit**.
+2. Add a listener: Port `443`, Protocol `HTTPS`, SSL certificate (from ACM).
+3. Add a redirect rule: Port `80` → `443`.
+
+> If using **Single instance** (no load balancer), EB handles HTTPS at the instance level. Use the `.ebextensions` nginx config approach or switch to a load-balanced environment for easier certificate management via ACM.
+
+### 4.6 Custom Domain (Optional)
+
+1. Register a domain or use Route 53.
+2. In ACM (AWS Certificate Manager), request a certificate for `api.your-domain.com`.
+3. Create a CNAME record pointing `api.your-domain.com` to the EB environment URL (`your-env.elasticbeanstalk.com`).
+4. Attach the ACM certificate to the EB load balancer listener (port 443).
+
+### 4.7 Verify the Backend
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-node --version   # should print v20.x.x
-npm --version
-```
-
-### 4.6 Install PM2
-
-```bash
-sudo npm install -g pm2
-pm2 --version
-```
-
-### 4.7 Clone the Repository
-
-```bash
-cd /home/ubuntu
-git clone https://github.com/your-username/your-repo.git cyber-fit
-cd cyber-fit/server
-```
-
-### 4.8 Install Dependencies
-
-```bash
-npm install --omit=dev
-```
-
-### 4.9 Create the Server .env
-
-```bash
-nano .env
-```
-
-Paste and fill in all values (use your real credentials):
-
-```env
-NODE_ENV=production
-PORT=3001
-CLIENT_ORIGIN=https://your-app.vercel.app
-
-SUPABASE_URL=https://xxxxxxxxxxxx.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=eyJ...
-
-GEMINI_API_KEY=AIza...
-GEMINI_MODEL=gemini-2.0-flash
-
-GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-...
-```
-
-Save with `Ctrl+O`, exit with `Ctrl+X`.
-
-```bash
-chmod 600 .env
-```
-
-### 4.10 Start the App with PM2
-
-```bash
-cd /home/ubuntu/cyber-fit/server
-pm2 start server.js --name cyber-fit-api --node-args="--env-file=.env"
-pm2 logs cyber-fit-api
-```
-
-Verify no errors in the logs, then save the process list:
-
-```bash
-pm2 save
-```
-
-### 4.11 Configure PM2 Startup (Automatic Restart on Reboot)
-
-```bash
-pm2 startup
-```
-
-PM2 will print a command like:
-
-```
-sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu
-```
-
-Run that exact command. Then:
-
-```bash
-pm2 save
-```
-
-### 4.12 Install and Configure Nginx
-
-```bash
-sudo apt install -y nginx
-sudo systemctl enable nginx
-sudo systemctl start nginx
-```
-
-Create the Nginx site configuration:
-
-```bash
-sudo nano /etc/nginx/sites-available/cyber-fit
-```
-
-Paste (replace `your-domain.com` with your actual domain or EC2 public IP):
-
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    # Redirect all HTTP to HTTPS
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com;
-
-    # SSL certificates (populated by Certbot in the next step)
-    ssl_certificate     /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-    include             /etc/letsencrypt/options-ssl-nginx.conf;
-    ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
-
-    # Security headers
-    add_header X-Content-Type-Options  "nosniff" always;
-    add_header X-Frame-Options         "DENY" always;
-    add_header Referrer-Policy         "strict-origin-when-cross-origin" always;
-
-    # Proxy all requests to Node.js
-    location / {
-        proxy_pass         http://127.0.0.1:3001;
-        proxy_http_version 1.1;
-
-        # SSE support (plan generation uses Server-Sent Events)
-        proxy_set_header   Upgrade            $http_upgrade;
-        proxy_set_header   Connection         "keep-alive";
-        proxy_set_header   Host               $host;
-        proxy_set_header   X-Real-IP          $remote_addr;
-        proxy_set_header   X-Forwarded-For    $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto  $scheme;
-
-        # Long timeout for SSE plan generation (up to 12 weeks can take ~5 minutes)
-        proxy_read_timeout    600s;
-        proxy_connect_timeout 60s;
-        proxy_send_timeout    600s;
-
-        # Disable buffering for SSE
-        proxy_buffering    off;
-        proxy_cache        off;
-    }
-}
-```
-
-Enable the site and test:
-
-```bash
-sudo ln -s /etc/nginx/sites-available/cyber-fit /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-### 4.13 Enable HTTPS with Let's Encrypt
-
-> Requires a domain name pointed at the EC2 public IP via an A record.
-
-```bash
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
-```
-
-Follow the prompts. Certbot will:
-- Obtain a certificate from Let's Encrypt
-- Update your Nginx config with the SSL paths
-- Optionally configure auto-redirect HTTP → HTTPS
-
-Verify auto-renewal works:
-
-```bash
-sudo certbot renew --dry-run
-```
-
-Auto-renewal runs via a systemd timer — no cron job needed.
-
-### 4.14 Verify the Backend
-
-```bash
-curl https://your-domain.com/api/health
+curl https://your-env.elasticbeanstalk.com/api/health
+# or with custom domain:
+curl https://api.your-domain.com/api/health
 # Expected: {"status":"ok","message":"Hello World"}
+```
+
+### 4.8 Deploy Updates
+
+**Via console:** Re-ZIP, go to EB → **Upload and deploy** → choose the new ZIP.
+
+**Via EB CLI:**
+```bash
+cd server
+eb deploy
+```
+
+### 4.9 View Logs
+
+```bash
+# EB CLI
+eb logs
+
+# Console
+EB Console → your environment → Logs → Request last 100 lines
 ```
 
 ---
@@ -554,12 +481,13 @@ All searches must return **no results**.
 
 ### Infrastructure
 
-- [ ] PM2 is running: `pm2 list` shows `cyber-fit-api` as `online`
-- [ ] PM2 startup is configured: `pm2 startup` + `pm2 save` completed
-- [ ] Nginx is proxying HTTPS → port 3001
-- [ ] SSL certificate is valid: `sudo certbot certificates`
-- [ ] Port 3001 is NOT exposed in the EC2 Security Group
-- [ ] `curl https://your-domain.com/api/health` returns `{"status":"ok",...}`
+- [ ] EB environment status is **Green** in the console
+- [ ] `curl https://your-env.elasticbeanstalk.com/api/health` returns `{"status":"ok",...}`
+- [ ] EB Environment Properties are set (no `.env` file on the server)
+- [ ] HTTPS listener is configured on port 443 with an ACM certificate
+- [ ] HTTP port 80 redirects to HTTPS
+- [ ] Node.js port 8080 is not publicly exposed (only accessible within EB security group)
+- [ ] `.ebextensions/nginx-sse.config` is included in the deployment ZIP (enables SSE streaming)
 
 ### Authentication
 
@@ -584,8 +512,7 @@ All searches must return **no results**.
 
 ### Logs
 
-- [ ] PM2 logs show no startup errors: `pm2 logs cyber-fit-api`
-- [ ] Nginx error log is clean: `sudo tail -f /var/log/nginx/error.log`
+- [ ] EB logs show no startup errors: `eb logs` or view in EB Console
 - [ ] Supabase logs show no RLS violations: Dashboard → Logs → Postgres
 
 ---
@@ -594,36 +521,49 @@ All searches must return **no results**.
 
 ### Update the Application
 
+Re-ZIP the `server/` folder and deploy:
+
 ```bash
-ssh -i your-key.pem ubuntu@<EC2_IP>
-cd /home/ubuntu/cyber-fit
-git pull origin main
-cd server && npm install --omit=dev
-pm2 restart cyber-fit-api
-pm2 logs cyber-fit-api
+cd server
+
+# Windows (PowerShell)
+Compress-Archive -Path * -DestinationPath ../cyber-fit-backend.zip -Force
+
+# macOS / Linux
+zip -r ../cyber-fit-backend.zip . --exclude "node_modules/*" --exclude ".env"
+```
+
+Then in the EB Console → **Upload and deploy**, or via CLI:
+
+```bash
+cd server
+eb deploy
 ```
 
 ### View Application Logs
 
 ```bash
-pm2 logs cyber-fit-api         # tail logs
-pm2 logs cyber-fit-api --lines 200  # last 200 lines
-pm2 monit                      # live CPU/RAM monitor
+# EB CLI — streams recent logs
+eb logs
+
+# EB CLI — open logs in browser
+eb console
 ```
 
-### Restart / Stop / Start
+Or in the console: EB → your environment → **Logs** → **Request last 100 lines**.
+
+### Update Environment Variables
+
+EB Console → your environment → **Configuration** → **Updates, monitoring, and logging** → **Environment properties** → **Edit**.
+
+Or via CLI:
 
 ```bash
-pm2 restart cyber-fit-api
-pm2 stop cyber-fit-api
-pm2 start cyber-fit-api
+eb setenv CLIENT_ORIGIN=https://your-new-domain.vercel.app
 ```
+
+EB restarts the environment automatically after changes.
 
 ### SSL Certificate Renewal
 
-Handled automatically by `certbot.timer`. To force renew:
-
-```bash
-sudo certbot renew
-sudo systemctl reload nginx
-```
+Managed automatically by AWS Certificate Manager (ACM) — no action required.

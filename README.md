@@ -584,7 +584,7 @@ See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for the full step-by-step production de
 | Script | Description |
 |---|---|
 | `npm run dev` | Start Express with nodemon (watch mode) |
-| `npm start` | Start Express in production mode (`NODE_ENV=production`) |
+| `npm start` | Start Express (`node server.js`) — used by Elastic Beanstalk |
 
 ### Client (`cd client`)
 

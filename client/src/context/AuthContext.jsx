@@ -24,10 +24,16 @@ function AuthProviderInner({ children }) {
 
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
+
+        // Redirect to home page immediately on sign-out so ProtectedRoute
+        // doesn't race ahead and send the user to /login instead.
+        if (event === 'SIGNED_OUT') {
+          navigate('/', { replace: true });
+        }
       }
     );
 
@@ -38,7 +44,7 @@ function AuthProviderInner({ children }) {
 
   const signOut = async () => {
     await supabase.auth.signOut();
-    navigate('/', { replace: true });
+    // Navigation is handled by the SIGNED_OUT event in onAuthStateChange above.
   };
 
   const value = {

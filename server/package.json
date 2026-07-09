@@ -3,9 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "install": "npm install",
     "dev": "nodemon --config nodemon.json server.js",
-    "start": "NODE_ENV=production node server.js",
+    "start": "node server.js",
     "lint": "eslint .",
     "format": "prettier --write ."
   },

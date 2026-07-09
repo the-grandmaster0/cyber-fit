@@ -1,4 +1,3 @@
-
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth.js';
 
@@ -13,8 +12,12 @@ export function ProtectedRoute({ children }) {
     );
   }
 
+  // Redirect unauthenticated users to home page (not /login).
+  // This prevents a race condition where ProtectedRoute fires a render-level
+  // redirect to /login at the same time AuthContext imperatively navigates to /
+  // on SIGNED_OUT — the home page handles showing the login option via the CTA.
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/" replace />;
   }
 
   return children;

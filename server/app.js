@@ -20,16 +20,16 @@ const allowedOrigins = [
   process.env.CLIENT_ORIGIN,
 ].filter(Boolean);
 
-if (allowedOrigins.length === 0) {
+if (process.env.NODE_ENV === 'production' && allowedOrigins.length === 0) {
   throw new Error(
-    'CORS misconfiguration: CLIENT_ORIGIN environment variable is required'
+    'CORS misconfiguration: CLIENT_ORIGIN environment variable is required in production'
   );
 }
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin only in development (curl, Postman, etc.)
+// In production with no CLIENT_ORIGIN set yet, fall back to blocking all cross-origin
+// requests rather than crashing the server entirely.
+const corsOriginHandler = allowedOrigins.length > 0
+  ? (origin, callback) => {
       if (!origin && process.env.NODE_ENV !== 'production') {
         return callback(null, true);
       }
@@ -37,7 +37,12 @@ app.use(
         return callback(null, true);
       }
       callback(new Error(`CORS: origin ${origin || '(none)'} not allowed`));
-    },
+    }
+  : false; // block all cross-origin requests if no origins configured
+
+app.use(
+  cors({
+    origin: corsOriginHandler,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

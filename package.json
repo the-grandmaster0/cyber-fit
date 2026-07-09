@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
     "build": "npm run build --workspace=client",
+    "build:eb": "node scripts/create-eb-zip.mjs",
     "lint": "npm run lint --workspaces",
     "format": "npm run format --workspaces"
   },

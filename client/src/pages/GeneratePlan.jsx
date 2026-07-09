@@ -139,24 +139,26 @@ export function GeneratePlan() {
 
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
+          let event;
           try {
-            const event = JSON.parse(line.slice(6));
+            event = JSON.parse(line.slice(6));
+          } catch {
+            // Non-JSON line — skip
+            continue;
+          }
 
-            if (event.type === 'status') {
-              setStatusMessage(event.message);
-            } else if (event.type === 'progress') {
-              setWeeksCompleted(event.completedWeek);
-              setTotalWeeks(event.totalWeeks);
-              setStatusMessage(`Week ${event.completedWeek} of ${event.totalWeeks} generated...`);
-            } else if (event.type === 'done') {
-              setStatusMessage('Protocol ready!');
-              navigate('/plan', { replace: true });
-              return;
-            } else if (event.type === 'error') {
-              throw new Error(event.error);
-            }
-          } catch (parseErr) {
-            // non-JSON line or parse error — skip
+          if (event.type === 'status') {
+            setStatusMessage(event.message);
+          } else if (event.type === 'progress') {
+            setWeeksCompleted(event.completedWeek);
+            setTotalWeeks(event.totalWeeks);
+            setStatusMessage(`Week ${event.completedWeek} of ${event.totalWeeks} generated...`);
+          } else if (event.type === 'done') {
+            setStatusMessage('Protocol ready!');
+            navigate('/plan', { replace: true });
+            return;
+          } else if (event.type === 'error') {
+            throw new Error(event.error);
           }
         }
       }

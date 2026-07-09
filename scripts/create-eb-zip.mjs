@@ -32,7 +32,7 @@ if (existsSync(outZip)) {
 // Collect all files recursively, excluding node_modules and .env
 const EXCLUDE = new Set([
   'node_modules', '.env', '.env.local', '.env.production',
-  'npm-debug.log', '.DS_Store',
+  'npm-debug.log', '.DS_Store', 'vercel.json',
 ]);
 
 function walk(dir, base = '') {

@@ -131,7 +131,7 @@ export function PlanView() {
       <div className="scanline animate-scanline" />
 
       {showSuccessToast && (
-        <div className="fixed top-16 left-4 right-4 sm:left-auto sm:right-4 sm:w-auto z-50 cyber-card bg-gradient-to-r from-cyber-green-600 to-cyber-green-700 text-white px-4 py-3 flex items-center gap-2">
+        <div className="fixed top-20 left-4 right-4 sm:left-auto sm:right-4 sm:w-auto z-50 cyber-card bg-gradient-to-r from-cyber-green-600 to-cyber-green-700 text-white px-4 py-3 flex items-center gap-2 shadow-lg">
           <span>✓</span>
           <span className="font-semibold text-sm font-mono">WORKOUT LOGGED!</span>
         </div>

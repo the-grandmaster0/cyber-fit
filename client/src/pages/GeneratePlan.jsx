@@ -227,7 +227,7 @@ export function GeneratePlan() {
             )}
 
             <p className="text-gray-600 font-mono text-xs mt-4">
-              DO NOT REFRESH — generation continues automatically
+              DO NOT REFRESH — Great Things Take Time
             </p>
           </div>
         )}

@@ -20,7 +20,8 @@ class GeminiError extends Error {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const singleWeekSchema = {
+// ─── Full plan schema (all weeks in one call) ──────────────────────────────────
+const weekSchema = {
   type: 'object',
   properties: {
     week_number: { type: 'integer' },
@@ -56,6 +57,19 @@ const singleWeekSchema = {
   required: ['week_number', 'week_title', 'coach_notes', 'days'],
 };
 
+const fullPlanSchema = {
+  type: 'object',
+  properties: {
+    program_title:       { type: 'string' },
+    overall_coach_notes: { type: 'string' },
+    weeks: {
+      type: 'array',
+      items: weekSchema,
+    },
+  },
+  required: ['program_title', 'overall_coach_notes', 'weeks'],
+};
+
 // ─── Progression tables ────────────────────────────────────────────────────────
 const PROGRESSION = {
   beginner: {
@@ -81,103 +95,92 @@ const PROGRESSION = {
   },
 };
 
-function getWeekProgression(experience_level, weekNumber, totalWeeks) {
+function buildProgressionGuide(experience_level, totalWeeks, weekOffset = 0) {
   const table = PROGRESSION[experience_level] || PROGRESSION.beginner;
-  const scaledIdx = Math.min(Math.floor(((weekNumber - 1) / totalWeeks) * 12), 11);
-  return {
-    sets:      table.sets[scaledIdx],
-    reps:      table.reps[scaledIdx],
-    rest:      table.rest[scaledIdx],
-    intensity: table.intensity[scaledIdx],
-    phase:     table.phase[scaledIdx],
-  };
+  // We need to map these weeks relative to the full program length
+  // weekOffset tells us where in the full program these weeks fall
+  return Array.from({ length: totalWeeks }, (_, i) => {
+    const absoluteWeek = weekOffset + i;
+    const scaledIdx = Math.min(Math.floor((absoluteWeek / (weekOffset + totalWeeks)) * 12), 11);
+    return `Week ${weekOffset + i + 1}: ${table.phase[scaledIdx]} — ${table.sets[scaledIdx]} sets × ${table.reps[scaledIdx]} reps, rest ${table.rest[scaledIdx]}s, intensity ${table.intensity[scaledIdx]}`;
+  }).join('\n');
 }
 
-function buildWeekPrompt({ weekNumber, totalWeeks, previousWeekSummary, context }) {
-  const { goal, experience_level, equipment, days_per_week, injuries_notes, extra_suggestions } = context;
-  const prog = getWeekProgression(experience_level, weekNumber, totalWeeks);
+function buildFullPlanPrompt({ goal, experience_level, equipment, days_per_week, duration_weeks, injuries_notes, extra_suggestions, weekOffset = 0, previousSummary = null }) {
+  const goalLabels = {
+    lose_weight: 'Fat Loss', build_muscle: 'Muscle Building',
+    strength: 'Strength', endurance: 'Endurance', general_fitness: 'General Fitness',
+  };
 
-  const instructions = (() => {
-    if (weekNumber === 1) {
-      return `WEEK 1 — ${prog.phase} phase.
-Establish baseline movements. ${prog.sets} sets × ${prog.reps} reps. Rest ${prog.rest}s. Intensity: ${prog.intensity}. Form over weight.`;
-    }
-    if (prog.phase === 'Deload') {
-      return `WEEK ${weekNumber} — DELOAD. Drop to ${prog.sets} sets × ${prog.reps} reps, rest ${prog.rest}s, lighter weight. Active recovery. Previous: ${previousWeekSummary || 'high intensity'}.`;
-    }
-    return `WEEK ${weekNumber}/${totalWeeks} — ${prog.phase} phase. MUST be harder than last week.
-Previous: ${previousWeekSummary || 'standard volume'}.
-This week: ${prog.sets} sets × ${prog.reps} reps, rest ${prog.rest}s, intensity ${prog.intensity}.
-Same core exercises, increase load/volume. coach_notes must state what increased.`;
-  })();
-
+  const progressionGuide = buildProgressionGuide(experience_level, duration_weeks, weekOffset);
   const extraLine = extra_suggestions?.trim()
-    ? `\nUser preferences (incorporate where appropriate): ${extra_suggestions.trim()}`
+    ? `\nUser preferences: ${extra_suggestions.trim()}`
     : '';
 
-  return `Certified fitness coach. Generate ONLY Week ${weekNumber} of a ${totalWeeks}-week ${experience_level} program.
-Goal: ${goal} | Equipment: ${equipment.join(', ') || 'bodyweight'} | Days/week: ${days_per_week} | Limits: ${injuries_notes || 'none'}${extraLine}
-${instructions}
-Output exactly ${days_per_week} days. Return ONLY valid JSON.`;
+  const continuationLine = previousSummary
+    ? `\nThis is the SECOND HALF of the program. The first half ended at: ${previousSummary}. Continue progressing from there.`
+    : '';
+
+  const weekStart = weekOffset + 1;
+  const weekEnd = weekOffset + duration_weeks;
+
+  return `You are a certified fitness coach. Generate weeks ${weekStart} to ${weekEnd} of a ${experience_level} ${goalLabels[goal]} workout program.
+
+Goal: ${goal} | Equipment: ${equipment.join(', ') || 'bodyweight'} | Days/week: ${days_per_week} | Limitations: ${injuries_notes || 'none'}${extraLine}${continuationLine}
+
+PROGRESSION GUIDE (follow exactly):
+${progressionGuide}
+
+Rules:
+- Generate exactly ${duration_weeks} weeks (weeks ${weekStart}-${weekEnd})
+- Each week must have exactly ${days_per_week} days
+- Increase difficulty week over week following the progression guide
+- coach_notes for each week must explain what changed from previous week
+- Return ONLY valid JSON matching the schema exactly`;
 }
 
-async function generateWeekWithRetry({ weekNumber, totalWeeks, previousWeekSummary, context }) {
-  const prompt = buildWeekPrompt({ weekNumber, totalWeeks, previousWeekSummary, context });
-
-  const attempt = async () => {
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
-      contents: prompt,
-      config: { responseMimeType: 'application/json', responseSchema: singleWeekSchema },
-    });
-    const parsed = JSON.parse(response.text);
-    parsed.week_number = weekNumber;
-    return parsed;
-  };
-
-  // Parse the retryDelay seconds from a Gemini 429 error message if present.
-  // e.g. "Please retry in 34.997911452s." → 35000 ms
+// ─── Retry wrapper ─────────────────────────────────────────────────────────────
+async function generateWithRetry(prompt, schema) {
   function parseRetryDelay(errMsg) {
     const match = errMsg?.match(/retry in (\d+(?:\.\d+)?)s/i);
     if (match) return Math.ceil(parseFloat(match[1])) * 1000;
     return null;
   }
 
-  // Check if this is a per-day quota exhaustion (not retryable today)
   function isDailyQuota(errMsg) {
     return errMsg?.includes('RequestsPerDay') || errMsg?.includes('free_tier_requests');
   }
 
-  // Attempt up to 4 times with exponential back-off, honoring API retryDelay hints
-  const MAX_ATTEMPTS = 4;
+  const MAX_ATTEMPTS = 3;
   let lastError;
 
-  for (let attempt_n = 1; attempt_n <= MAX_ATTEMPTS; attempt_n++) {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      return await attempt();
+      const response = await ai.models.generateContent({
+        model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: schema,
+        },
+      });
+      return JSON.parse(response.text);
     } catch (err) {
       lastError = err;
       const msg = err.message || '';
-      console.error(`  Week ${weekNumber} attempt ${attempt_n} failed: ${msg.slice(0, 120)}`);
+      console.error(`Attempt ${attempt} failed: ${msg.slice(0, 120)}`);
 
-      // Hard failures — never retry
       if (msg.includes('API_KEY_INVALID') || msg.includes('UNAUTHENTICATED')) break;
-
-      // Daily quota exhausted — no point retrying
       if ((msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')) && isDailyQuota(msg)) break;
+      if (attempt === MAX_ATTEMPTS) break;
 
-      if (attempt_n === MAX_ATTEMPTS) break;
-
-      // For rate-limit (RPM) 429s: honor the retryDelay the API tells us
       let waitMs;
       if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')) {
-        waitMs = parseRetryDelay(msg) ?? Math.min(10000 * 2 ** (attempt_n - 1), 90000);
+        waitMs = parseRetryDelay(msg) ?? Math.min(10000 * 2 ** (attempt - 1), 60000);
       } else {
-        // Generic error — shorter exponential back-off
-        waitMs = 3000 * attempt_n;
+        waitMs = 3000 * attempt;
       }
-
-      console.log(`  Week ${weekNumber} — waiting ${(waitMs / 1000).toFixed(0)}s before retry ${attempt_n + 1}...`);
+      console.log(`Waiting ${(waitMs / 1000).toFixed(0)}s before retry ${attempt + 1}...`);
       await sleep(waitMs);
     }
   }
@@ -188,17 +191,15 @@ async function generateWeekWithRetry({ weekNumber, totalWeeks, previousWeekSumma
   if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')) {
     if (isDailyQuota(msg))
       throw new GeminiError(
-        'Daily AI quota reached. The free tier allows 1500 requests/day on gemini-2.0-flash. Please try again tomorrow, or set GEMINI_MODEL=gemini-2.0-flash-lite in your server .env for a lighter model.',
+        'Daily AI quota reached. Please try again tomorrow, or use a different Gemini model.',
         429
       );
     throw new GeminiError('The AI service is rate-limited. Please wait a minute and try again.', 429);
   }
-  throw new GeminiError(`Failed to generate week ${weekNumber}: ${msg}`, 503);
+  throw new GeminiError(`Failed to generate plan: ${msg}`, 503);
 }
 
 // ─── Public export ─────────────────────────────────────────────────────────────
-// onProgress(weekNumber, totalWeeks) — optional callback for SSE streaming
-
 export async function generateWorkoutPlan({
   goal,
   experience_level,
@@ -210,66 +211,75 @@ export async function generateWorkoutPlan({
   onProgress,
 }) {
   const totalWeeks = duration_weeks || 4;
-  const context = { goal, experience_level, equipment, days_per_week, injuries_notes, extra_suggestions };
 
   const goalLabels = {
     lose_weight: 'Fat Loss', build_muscle: 'Muscle Building',
     strength: 'Strength', endurance: 'Endurance', general_fitness: 'General Fitness',
   };
 
-  console.log(`Generating ${totalWeeks}-week ${experience_level} ${goalLabels[goal]} plan...`);
+  // Estimate if we need to split the generation into two calls.
+  // Large plans (many weeks × many days) can exceed Gemini's output token limit.
+  // Threshold: if weeks × days_per_week > 20, split into two halves.
+  const needsSplit = totalWeeks * days_per_week > 20;
 
-  // Free-tier RPM is 10 req/min on gemini-2.0-flash.
-  // Batch size 2 + 4s stagger + 8s inter-batch pause keeps us safely under.
-  const BATCH_SIZE = 2;
-  const weeks = new Array(totalWeeks);
+  console.log(`Generating ${totalWeeks}-week ${experience_level} ${goalLabels[goal]} plan (${needsSplit ? '2 calls' : '1 call'})...`);
 
-  // Week 1 — generate alone first (establishes the baseline summary)
-  console.log(`  → Week 1/${totalWeeks}`);
-  weeks[0] = await generateWeekWithRetry({ weekNumber: 1, totalWeeks, previousWeekSummary: null, context });
-  onProgress?.(1, totalWeeks);
+  onProgress?.(0, totalWeeks);
 
-  // Remaining weeks in parallel batches of BATCH_SIZE
-  // Each batch uses week 1's summary as the "previous" anchor
-  // (not perfect for later weeks but keeps it fast; progression is enforced by the prompt tables)
-  const sampleEx0 = weeks[0].days?.[0]?.exercises?.[0];
-  const week1Summary = sampleEx0
-    ? `${sampleEx0.sets} sets × ${sampleEx0.reps} ${sampleEx0.name}`
-    : weeks[0].week_title;
+  let allWeeks = [];
 
-  for (let batchStart = 2; batchStart <= totalWeeks; batchStart += BATCH_SIZE) {
-    const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, totalWeeks);
-    const batchNums = [];
-    for (let w = batchStart; w <= batchEnd; w++) batchNums.push(w);
-
-    console.log(`  → Weeks ${batchNums.join(', ')}/${totalWeeks} (parallel)`);
-
-    // Small stagger within batch so requests don't all fire at exactly the same ms
-    const batchResults = await Promise.all(
-      batchNums.map((weekNum, i) =>
-        sleep(i * 1500).then(() =>
-          generateWeekWithRetry({
-            weekNumber: weekNum,
-            totalWeeks,
-            previousWeekSummary: weekNum === 2 ? week1Summary : `${goalLabels[goal]} week ${weekNum - 1}`,
-            context,
-          })
-        )
-      )
-    );
-
-    batchResults.forEach((week, i) => {
-      weeks[batchStart - 1 + i] = week;
-      onProgress?.(batchStart + i, totalWeeks);
+  if (!needsSplit) {
+    // ── Single call ────────────────────────────────────────────────────────────
+    const prompt = buildFullPlanPrompt({
+      goal, experience_level, equipment, days_per_week,
+      duration_weeks: totalWeeks, injuries_notes, extra_suggestions,
     });
+    const plan = await generateWithRetry(prompt, fullPlanSchema);
+    allWeeks = plan.weeks || [];
+  } else {
+    // ── Two-call split ─────────────────────────────────────────────────────────
+    const half1 = Math.ceil(totalWeeks / 2);
+    const half2 = totalWeeks - half1;
 
-    // Pause between batches to stay under RPM limits
-    if (batchEnd < totalWeeks) await sleep(8000);
+    // First half
+    console.log(`  → Weeks 1-${half1}`);
+    const prompt1 = buildFullPlanPrompt({
+      goal, experience_level, equipment, days_per_week,
+      duration_weeks: half1, injuries_notes, extra_suggestions,
+      weekOffset: 0,
+    });
+    const plan1 = await generateWithRetry(prompt1, fullPlanSchema);
+    allWeeks.push(...(plan1.weeks || []));
+    onProgress?.(half1, totalWeeks);
+
+    // Brief pause to avoid RPM limits
+    await sleep(2000);
+
+    // Second half — give context about what came before
+    console.log(`  → Weeks ${half1 + 1}-${totalWeeks}`);
+    const lastWeek = allWeeks[allWeeks.length - 1];
+    const previousSummary = lastWeek?.days?.[0]?.exercises?.[0]
+      ? `${lastWeek.days[0].exercises[0].sets} sets × ${lastWeek.days[0].exercises[0].reps} of ${lastWeek.days[0].exercises[0].name}`
+      : `week ${half1} completed`;
+
+    const prompt2 = buildFullPlanPrompt({
+      goal, experience_level, equipment, days_per_week,
+      duration_weeks: half2, injuries_notes, extra_suggestions,
+      weekOffset: half1,
+      previousSummary,
+    });
+    const plan2 = await generateWithRetry(prompt2, fullPlanSchema);
+    allWeeks.push(...(plan2.weeks || []));
   }
+
+  // Ensure week numbers are sequential regardless of split
+  allWeeks = allWeeks.map((week, i) => ({ ...week, week_number: i + 1 }));
+
+  onProgress?.(totalWeeks, totalWeeks);
 
   return {
     program_title: `${totalWeeks}-Week ${goalLabels[goal] || 'Fitness'} Program`,
-    overall_coach_notes: `A ${totalWeeks}-week progressive ${goalLabels[goal] || 'fitness'} program for ${experience_level} athletes. Volume and intensity increase each week with structured periodisation${totalWeeks >= 8 ? ', ending with a deload week' : ''}.`,
-    weeks,
+    overall_coach_notes: `A ${totalWeeks}-week progressive ${goalLabels[goal] || 'fitness'} program for ${experience_level} athletes.`,
+    weeks: allWeeks,
   };
 }

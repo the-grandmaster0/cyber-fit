@@ -40,7 +40,7 @@ export function PlanView() {
       setViewingWeek(null);
     } catch (err) {
       if (err.response?.status === 404) {
-        navigate('/onboarding', { replace: true });
+        setError('No active plan found. Generate one to get started.');
         return;
       }
       setError(getErrorMessage(err));

@@ -95,48 +95,49 @@ const PROGRESSION = {
   },
 };
 
-function buildProgressionGuide(experience_level, totalWeeks, weekOffset = 0) {
+function buildProgressionGuide(experience_level, batchWeeks, weekOffset = 0, totalProgramWeeks = null) {
   const table = PROGRESSION[experience_level] || PROGRESSION.beginner;
-  // We need to map these weeks relative to the full program length
-  // weekOffset tells us where in the full program these weeks fall
-  return Array.from({ length: totalWeeks }, (_, i) => {
+  const fullProgram = totalProgramWeeks || batchWeeks;
+  return Array.from({ length: batchWeeks }, (_, i) => {
     const absoluteWeek = weekOffset + i;
-    const scaledIdx = Math.min(Math.floor((absoluteWeek / (weekOffset + totalWeeks)) * 12), 11);
-    return `Week ${weekOffset + i + 1}: ${table.phase[scaledIdx]} — ${table.sets[scaledIdx]} sets × ${table.reps[scaledIdx]} reps, rest ${table.rest[scaledIdx]}s, intensity ${table.intensity[scaledIdx]}`;
+    // Scale index across the full program so intensity is correct regardless of batch
+    const scaledIdx = Math.min(Math.floor((absoluteWeek / fullProgram) * 12), 11);
+    return `Week ${absoluteWeek + 1}: ${table.phase[scaledIdx]} — ${table.sets[scaledIdx]} sets × ${table.reps[scaledIdx]} reps, rest ${table.rest[scaledIdx]}s, intensity ${table.intensity[scaledIdx]}`;
   }).join('\n');
 }
 
-function buildFullPlanPrompt({ goal, experience_level, equipment, days_per_week, duration_weeks, injuries_notes, extra_suggestions, weekOffset = 0, previousSummary = null }) {
+function buildFullPlanPrompt({ goal, experience_level, equipment, days_per_week, duration_weeks, injuries_notes, extra_suggestions, weekOffset = 0, previousSummary = null, totalProgramWeeks = null }) {
   const goalLabels = {
     lose_weight: 'Fat Loss', build_muscle: 'Muscle Building',
     strength: 'Strength', endurance: 'Endurance', general_fitness: 'General Fitness',
   };
 
-  const progressionGuide = buildProgressionGuide(experience_level, duration_weeks, weekOffset);
+  const fullProgram = totalProgramWeeks || duration_weeks;
+  const progressionGuide = buildProgressionGuide(experience_level, duration_weeks, weekOffset, fullProgram);
   const extraLine = extra_suggestions?.trim()
     ? `\nUser preferences: ${extra_suggestions.trim()}`
     : '';
 
   const continuationLine = previousSummary
-    ? `\nThis is the SECOND HALF of the program. The first half ended at: ${previousSummary}. Continue progressing from there.`
+    ? `\nContinuing from previous batch. Last week ended with: ${previousSummary}. Progress intensity accordingly.`
     : '';
 
   const weekStart = weekOffset + 1;
   const weekEnd = weekOffset + duration_weeks;
 
-  return `You are a certified fitness coach. Generate weeks ${weekStart} to ${weekEnd} of a ${experience_level} ${goalLabels[goal]} workout program.
+  return `You are a certified fitness coach. Generate weeks ${weekStart} to ${weekEnd} of a ${fullProgram}-week ${experience_level} ${goalLabels[goal]} program.
 
 Goal: ${goal} | Equipment: ${equipment.join(', ') || 'bodyweight'} | Days/week: ${days_per_week} | Limitations: ${injuries_notes || 'none'}${extraLine}${continuationLine}
 
-PROGRESSION GUIDE (follow exactly):
+PROGRESSION GUIDE for these weeks (follow exactly):
 ${progressionGuide}
 
 Rules:
-- Generate exactly ${duration_weeks} weeks (weeks ${weekStart}-${weekEnd})
+- Generate exactly ${duration_weeks} weeks (weeks ${weekStart}-${weekEnd} of ${fullProgram})
 - Each week must have exactly ${days_per_week} days
-- Increase difficulty week over week following the progression guide
-- coach_notes for each week must explain what changed from previous week
-- Return ONLY valid JSON matching the schema exactly`;
+- Follow the progression guide intensities strictly
+- coach_notes must explain what changed from the previous week
+- Return ONLY valid JSON`;
 }
 
 // ─── Retry wrapper ─────────────────────────────────────────────────────────────
@@ -211,71 +212,59 @@ export async function generateWorkoutPlan({
   onProgress,
 }) {
   const totalWeeks = duration_weeks || 4;
+  const BATCH_SIZE = 4; // generate 4 weeks per API call
 
   const goalLabels = {
     lose_weight: 'Fat Loss', build_muscle: 'Muscle Building',
     strength: 'Strength', endurance: 'Endurance', general_fitness: 'General Fitness',
   };
 
-  // Estimate if we need to split the generation into two calls.
-  // Large plans (many weeks × many days) can exceed Gemini's output token limit.
-  // Threshold: if weeks × days_per_week > 20, split into two halves.
-  const needsSplit = totalWeeks * days_per_week > 20;
-
-  console.log(`Generating ${totalWeeks}-week ${experience_level} ${goalLabels[goal]} plan (${needsSplit ? '2 calls' : '1 call'})...`);
+  const numBatches = Math.ceil(totalWeeks / BATCH_SIZE);
+  console.log(`Generating ${totalWeeks}-week ${experience_level} ${goalLabels[goal]} plan (${numBatches} batch${numBatches > 1 ? 'es' : ''} of ${BATCH_SIZE})...`);
 
   onProgress?.(0, totalWeeks);
 
   let allWeeks = [];
 
-  if (!needsSplit) {
-    // ── Single call ────────────────────────────────────────────────────────────
+  for (let batch = 0; batch < numBatches; batch++) {
+    const weekOffset = batch * BATCH_SIZE;
+    const batchSize = Math.min(BATCH_SIZE, totalWeeks - weekOffset);
+    const weekStart = weekOffset + 1;
+    const weekEnd = weekOffset + batchSize;
+
+    console.log(`  → Weeks ${weekStart}-${weekEnd}`);
+
+    // Build context about previous batch for continuity
+    const lastWeek = allWeeks[allWeeks.length - 1];
+    const previousSummary = lastWeek
+      ? (() => {
+          const ex = lastWeek.days?.[0]?.exercises?.[0];
+          return ex
+            ? `${ex.sets} sets × ${ex.reps} of ${ex.name}`
+            : `week ${weekOffset} completed`;
+        })()
+      : null;
+
     const prompt = buildFullPlanPrompt({
       goal, experience_level, equipment, days_per_week,
-      duration_weeks: totalWeeks, injuries_notes, extra_suggestions,
-    });
-    const plan = await generateWithRetry(prompt, fullPlanSchema);
-    allWeeks = plan.weeks || [];
-  } else {
-    // ── Two-call split ─────────────────────────────────────────────────────────
-    const half1 = Math.ceil(totalWeeks / 2);
-    const half2 = totalWeeks - half1;
-
-    // First half
-    console.log(`  → Weeks 1-${half1}`);
-    const prompt1 = buildFullPlanPrompt({
-      goal, experience_level, equipment, days_per_week,
-      duration_weeks: half1, injuries_notes, extra_suggestions,
-      weekOffset: 0,
-    });
-    const plan1 = await generateWithRetry(prompt1, fullPlanSchema);
-    allWeeks.push(...(plan1.weeks || []));
-    onProgress?.(half1, totalWeeks);
-
-    // Brief pause to avoid RPM limits
-    await sleep(2000);
-
-    // Second half — give context about what came before
-    console.log(`  → Weeks ${half1 + 1}-${totalWeeks}`);
-    const lastWeek = allWeeks[allWeeks.length - 1];
-    const previousSummary = lastWeek?.days?.[0]?.exercises?.[0]
-      ? `${lastWeek.days[0].exercises[0].sets} sets × ${lastWeek.days[0].exercises[0].reps} of ${lastWeek.days[0].exercises[0].name}`
-      : `week ${half1} completed`;
-
-    const prompt2 = buildFullPlanPrompt({
-      goal, experience_level, equipment, days_per_week,
-      duration_weeks: half2, injuries_notes, extra_suggestions,
-      weekOffset: half1,
+      duration_weeks: batchSize, injuries_notes, extra_suggestions,
+      weekOffset,
       previousSummary,
+      totalProgramWeeks: totalWeeks,
     });
-    const plan2 = await generateWithRetry(prompt2, fullPlanSchema);
-    allWeeks.push(...(plan2.weeks || []));
+
+    const plan = await generateWithRetry(prompt, fullPlanSchema);
+    allWeeks.push(...(plan.weeks || []));
+
+    // Report progress after each batch
+    onProgress?.(Math.min(weekEnd, totalWeeks), totalWeeks);
+
+    // Pause between batches to stay under RPM limits
+    if (batch < numBatches - 1) await sleep(3000);
   }
 
-  // Ensure week numbers are sequential regardless of split
+  // Ensure week numbers are sequential
   allWeeks = allWeeks.map((week, i) => ({ ...week, week_number: i + 1 }));
-
-  onProgress?.(totalWeeks, totalWeeks);
 
   return {
     program_title: `${totalWeeks}-Week ${goalLabels[goal] || 'Fitness'} Program`,

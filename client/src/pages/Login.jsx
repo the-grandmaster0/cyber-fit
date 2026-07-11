@@ -29,7 +29,7 @@ export function Login() {
   // Redirect when already logged in (or right after email-confirmed login)
   useEffect(() => {
     if (user) {
-      navigate('/plan', { replace: true });
+      navigate('/dashboard', { replace: true });
     }
   }, [user, navigate]);
 

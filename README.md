@@ -185,7 +185,7 @@ The Vite dev server proxies all `/api` requests to the Express server automatica
 | `SUPABASE_URL` | ✅ | Your Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | **Secret.** Supabase service role key — backend only |
 | `GEMINI_API_KEY` | ✅ | **Secret.** Google Gemini API key — backend only |
-| `GEMINI_MODEL` | ☑️ | Gemini model override (default: `gemini-2.0-flash`) |
+| `GEMINI_MODEL` | ☑️ | Gemini model override |
 | `GOOGLE_CLIENT_ID` | ☑️ | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | ☑️ | **Secret.** Google OAuth client secret |
 
@@ -491,7 +491,7 @@ The AI layer lives entirely in `server/services/genai.js`. The key design decisi
 
 - **Backend-only** — the Gemini API key never reaches the browser. All requests go `client → Express → Gemini API`.
 - **Structured output** — Gemini is constrained to return valid JSON matching a strict week schema via `responseMimeType: 'application/json'` and `responseSchema`.
-- **Batched generation** — weeks are generated in batches of 2 (batch size) with a 1.5s stagger between requests and an 8s pause between batches to stay within Gemini free-tier RPM limits (10 req/min on `gemini-2.0-flash`).
+- **Batched generation** — weeks are generated in batches of 2 (batch size) with a 1.5s stagger between requests and an 8s pause between batches to stay within Gemini free-tier RPM limits (10 req/min).
 - **Retry logic** — each week attempt retries up to 4 times with exponential backoff. The server parses Gemini's `retry in Xs` hint from 429 responses and honours it exactly.
 - **Progressive overload** — a pre-built progression table maps experience level (beginner / intermediate / advanced) and week position to sets, reps, rest, intensity, and phase labels (Foundation → Build → Intensify → Peak → Deload).
 

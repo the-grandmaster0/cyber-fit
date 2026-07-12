@@ -1,7 +1,5 @@
 # CYBER-FIT AI — AI-Powered Workout Protocol Generator
 
-> **Created for the BharatCares AICTE IBM SkillBuild Internship Program**
-
 CYBER-FIT AI is a full-stack Progressive Web App that uses Google Gemini to generate personalised, multi-week progressive workout programs. Users authenticate via Supabase, receive AI-generated plans tailored to their goals and equipment, log completed workouts, and track streaks and training volume over time.
 
 ---
@@ -593,12 +591,6 @@ See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for the full step-by-step production de
 | `npm run dev` | Start Vite dev server on port 5173 |
 | `npm run build` | Build for production into `dist/` |
 | `npm run preview` | Serve the production build locally |
-
----
-
-## Internship
-
-This project was created as part of the **BharatCares AICTE IBM SkillBuild Internship** program, demonstrating practical application of Generative AI, full-stack web development, cloud deployment, and secure API design.
 
 ---
 

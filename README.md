@@ -185,7 +185,7 @@ The Vite dev server proxies all `/api` requests to the Express server automatica
 | `SUPABASE_URL` | ✅ | Your Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | **Secret.** Supabase service role key — backend only |
 | `GEMINI_API_KEY` | ✅ | **Secret.** Google Gemini API key — backend only |
-| `GEMINI_MODEL` | ☑️ | Gemini model override |
+| `GEMINI_MODEL` | ☑️ | Gemini 3.5 flash |
 | `GOOGLE_CLIENT_ID` | ☑️ | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | ☑️ | **Secret.** Google OAuth client secret |
 

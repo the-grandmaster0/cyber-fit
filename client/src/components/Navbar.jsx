@@ -13,6 +13,18 @@ export function Navbar({ actions = [] }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
 
+  // Lock/unlock body scroll when mobile menu open
+  useEffect(() => {
+    if (open) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [open]);
+
   // Close on outside click (desktop dropdown)
   useEffect(() => {
     function onOutside(e) {
@@ -141,6 +153,12 @@ export function Navbar({ actions = [] }) {
               {/* ── Dropdown / slide-down menu ── */}
               {open && (
                 <>
+                  {/* Mobile: backdrop to close menu on click */}
+                  <div
+                    className="md:hidden fixed inset-0 bg-cyber-black/70 z-40"
+                    onClick={() => setOpen(false)}
+                  ></div>
+
                   {/* Desktop: floating dropdown */}
                   <div className="hidden md:block absolute right-0 top-full mt-2 w-52 bg-cyber-dark border border-cyber-purple-700/60 shadow-xl shadow-cyber-purple-900/40 z-50 overflow-hidden"
                     style={{ clipPath: 'polygon(0 8px,8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%)' }}
